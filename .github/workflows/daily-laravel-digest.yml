@@ -26,7 +26,7 @@ jobs:
 
       - name: Commit and push digest
         run: |
-          git config user.name "Hassan"
+          git config user.name "Muhammad Hassan Javed"
           git config user.email "hassanhafiz44@gmail.com"
           git add laravel-digest/
           git diff --staged --quiet || git commit -m "study: Laravel digest $(date +%Y-%m-%d)"
