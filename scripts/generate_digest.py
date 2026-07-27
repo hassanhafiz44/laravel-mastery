@@ -32,17 +32,17 @@ TOPICS = [
     ("validation",                      "Validation"),
     ("errors",                          "Error Handling"),
     ("logging",                         "Logging"),
-    ("digging-deeper/artisan",          "Artisan Console"),
-    ("digging-deeper/broadcasting",     "Broadcasting"),
+    ("artisan",                         "Artisan Console"),
+    ("broadcasting",                    "Broadcasting"),
     ("cache",                           "Cache"),
-    ("digging-deeper/collections",      "Collections"),
-    ("digging-deeper/events",           "Events & Listeners"),
-    ("digging-deeper/filesystem",       "File Storage"),
-    ("digging-deeper/mail",             "Mail"),
-    ("digging-deeper/notifications",    "Notifications"),
-    ("digging-deeper/queues",           "Queues"),
-    ("digging-deeper/scheduling",       "Task Scheduling"),
-    ("digging-deeper/http-client",      "HTTP Client"),
+    ("collections",                     "Collections"),
+    ("events",                          "Events & Listeners"),
+    ("filesystem",                      "File Storage"),
+    ("mail",                            "Mail"),
+    ("notifications",                   "Notifications"),
+    ("queues",                          "Queues"),
+    ("scheduling",                      "Task Scheduling"),
+    ("http-client",                     "HTTP Client"),
     ("database",                        "Database: Getting Started"),
     ("queries",                         "Query Builder"),
     ("pagination",                      "Pagination"),
@@ -53,7 +53,7 @@ TOPICS = [
     ("eloquent-relationships",          "Eloquent: Relationships"),
     ("eloquent-collections",            "Eloquent: Collections"),
     ("eloquent-mutators",               "Eloquent: Mutators & Casting"),
-    ("eloquent-api-resources",          "Eloquent: API Resources"),
+    ("eloquent-resources",              "Eloquent: API Resources"),
     ("eloquent-serialization",          "Eloquent: Serialization"),
     ("eloquent-factories",              "Eloquent: Factories"),
     ("authentication",                  "Authentication"),
@@ -93,6 +93,9 @@ def html_to_text(raw):
     """Strip HTML to plain readable text."""
     raw = re.sub(r'<script[^>]*>.*?</script>', '', raw, flags=re.DOTALL)
     raw = re.sub(r'<style[^>]*>.*?</style>', '', raw, flags=re.DOTALL)
+    # Code blocks get their own section — inlining them here mashes the
+    # syntax-highlighting line numbers into the prose.
+    raw = re.sub(r'<pre[^>]*>.*?</pre>', ' ', raw, flags=re.DOTALL)
     # Strip all tags
     raw = re.sub(r'<[^>]+>', ' ', raw)
     raw = html.unescape(raw)
@@ -101,23 +104,33 @@ def html_to_text(raw):
     return raw.strip()
 
 
-def extract_sections(raw_html):
+def article_body(raw_html):
     """
-    Pull h2/h3 headings + their paragraph content from the doc.
-    Returns list of (heading, body_text) tuples.
+    Narrow a doc page down to just the rendered article.
+
+    The page ships the doc twice: an escaped JSON payload near the top, then the
+    rendered article. Anchoring on the last h1 skips the payload copy and the
+    sidebar nav that sits between the two; the "On this page" cut drops the
+    trailing table of contents and footer.
     """
-    # Cut off nav/footer noise — stop at "On this page"
     cut = re.search(r'on this page', raw_html, re.IGNORECASE)
     if cut:
         raw_html = raw_html[:cut.start()]
 
-    # Find main content after first h1
-    h1 = re.search(r'<h1', raw_html)
-    if h1:
-        raw_html = raw_html[h1.start():]
+    h1s = list(re.finditer(r'<h1[ >]', raw_html))
+    if h1s:
+        raw_html = raw_html[h1s[-1].start():]
 
+    return raw_html
+
+
+def extract_sections(article):
+    """
+    Pull h2/h3 headings + their paragraph content from the article.
+    Returns list of (heading, body_text) tuples.
+    """
     # Split by h2/h3 headings
-    parts = re.split(r'(<h[23][^>]*>.*?</h[23]>)', raw_html, flags=re.DOTALL)
+    parts = re.split(r'(<h[23][^>]*>.*?</h[23]>)', article, flags=re.DOTALL)
 
     sections = []
     current_heading = None
@@ -136,11 +149,25 @@ def extract_sections(raw_html):
     return sections
 
 
-def extract_code_examples(raw_html):
-    """Pull the most illustrative code blocks from the page."""
-    blocks = re.findall(r'<pre[^>]*><code[^>]*>(.*?)</code></pre>', raw_html, re.DOTALL)
+def extract_code_examples(article):
+    """Pull the most illustrative code blocks from the article."""
+    blocks = re.findall(r'<pre[^>]*><code[^>]*>(.*?)</code></pre>', article, re.DOTALL)
     examples = []
     for block in blocks:
+        # Torchlight renders each line with a line-number gutter span, which
+        # would end up mashed into the code. It also emits a hidden, unstyled
+        # copy of the block for the clipboard button — prefer that.
+        copy_target = re.search(
+            r"<div[^>]*class='torchlight-copy-target'[^>]*>(.*?)</div>",
+            block, re.DOTALL
+        )
+        if copy_target:
+            block = copy_target.group(1)
+        else:
+            block = re.sub(r'<span[^>]*class="line-number"[^>]*>.*?</span>', '',
+                           block, flags=re.DOTALL)
+            block = re.sub(r"<div[^>]*class='line'[^>]*>", '\n', block)
+
         code = html.unescape(re.sub(r'<[^>]+>', '', block)).strip()
         # Skip tiny one-liners that aren't meaningful, keep up to 5 good examples
         if len(code) > 30 and len(examples) < 5:
@@ -158,8 +185,9 @@ def build_digest(date, index, slug, name, raw_html):
     next_index = (index + 1) % total
     next_slug, next_name = TOPICS[next_index]
 
-    sections = extract_sections(raw_html)
-    code_examples = extract_code_examples(raw_html)
+    article = article_body(raw_html)
+    sections = extract_sections(article)
+    code_examples = extract_code_examples(article)
 
     lines = [
         f"# {name}",
